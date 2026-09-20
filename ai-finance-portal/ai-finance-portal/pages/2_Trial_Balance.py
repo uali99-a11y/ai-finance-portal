@@ -1,9 +1,23 @@
 import streamlit as st
 import pandas as pd
+from modules.db import get_supabase_client
 
 st.set_page_config(page_title="Trial Balance", page_icon="📑", layout="wide")
 
 st.title("📑 Trial Balance")
+
+supabase = get_supabase_client()
+
+companies_response = supabase.table("companies").select("*").order("name").execute()
+companies = companies_response.data
+
+if not companies:
+    st.warning("No companies found yet. Please add a company first from the Dashboard page.")
+    st.stop()
+
+company_names = [c["name"] for c in companies]
+selected_name = st.selectbox("Select Company", company_names)
+selected_company = next(c for c in companies if c["name"] == selected_name)
 
 st.markdown(
     "Upload your Trial Balance Excel file below. "
@@ -37,8 +51,28 @@ if uploaded_file is not None:
                 else:
                     st.error("⚠️ Not Balanced")
 
-            # Save to session so other pages can use it later
             st.session_state["trial_balance"] = df
+
+            st.divider()
+            if st.button("💾 Save to Database"):
+                upload_result = supabase.table("tb_uploads").insert({
+                    "company_id": selected_company["id"],
+                    "file_name": uploaded_file.name
+                }).execute()
+
+                upload_id = upload_result.data[0]["id"]
+
+                lines = []
+                for _, row in df.iterrows():
+                    lines.append({
+                        "upload_id": upload_id,
+                        "account_name": str(row.get("Account Name", "")),
+                        "debit": float(row.get("Debit", 0) or 0),
+                        "credit": float(row.get("Credit", 0) or 0)
+                    })
+
+                supabase.table("tb_lines").insert(lines).execute()
+                st.success(f"Saved {len(lines)} rows to database for {selected_company['name']}!")
         else:
             st.warning(
                 "Could not find 'Debit' and 'Credit' columns in your file. "
